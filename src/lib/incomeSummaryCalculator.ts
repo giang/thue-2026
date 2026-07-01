@@ -9,6 +9,8 @@
  * - So sánh với năm trước
  */
 
+import { getMaxSocialInsuranceSalary, NEW_TAX_BRACKETS, NEW_DEDUCTIONS } from './taxCalculator';
+
 // Income source categories
 export type IncomeCategory =
   | 'salary'           // Lương, tiền công
@@ -237,21 +239,14 @@ export interface IncomeSummaryResult {
   entries: IncomeEntry[];
 }
 
-// Tax brackets for progressive tax (from 2026)
-const TAX_BRACKETS_2026 = [
-  { min: 0, max: 10_000_000, rate: 0.05 },
-  { min: 10_000_000, max: 30_000_000, rate: 0.10 },
-  { min: 30_000_000, max: 60_000_000, rate: 0.15 },
-  { min: 60_000_000, max: 120_000_000, rate: 0.20 },
-  { min: 120_000_000, max: Infinity, rate: 0.25 },
-];
+// Tái dùng biểu thuế 5 bậc trung tâm (Luật 109/2025/QH15)
+const TAX_BRACKETS_2026 = NEW_TAX_BRACKETS;
 
-// Deductions (Nghị quyết 110/2025/UBTVQH15)
+// Giảm trừ - tái dùng mức trung tâm (NQ 110/2025/UBTVQH15)
 const DEDUCTIONS = {
-  personal: 15_500_000, // 15.5 triệu/tháng từ 2026
-  dependent: 6_200_000, // 6.2 triệu/người/tháng từ 2026
-  insuranceRate: 0.105, // 10.5% BHXH
-  insuranceCap: 46_800_000, // Mức trần BHXH (36 triệu x 130%)
+  personal: NEW_DEDUCTIONS.personal,
+  dependent: NEW_DEDUCTIONS.dependent,
+  insuranceRate: 0.105, // 10.5% BHXH (trần dùng getMaxSocialInsuranceSalary date-aware)
 };
 
 // Month names in Vietnamese
@@ -279,20 +274,23 @@ export function getCategoryConfig(category: IncomeCategory): IncomeCategoryConfi
  * Calculate progressive tax on salary income
  */
 function calculateProgressiveTax(annualTaxableIncome: number): number {
-  let tax = 0;
-  let remaining = annualTaxableIncome;
+  // Biểu thuế lũy tiến là ngưỡng THÁNG -> quy đổi thu nhập năm về tháng,
+  // tính thuế tháng rồi nhân 12 (đúng phương pháp tính thuế TNCN từ tiền lương).
+  const monthlyTaxableIncome = Math.max(0, annualTaxableIncome) / 12;
+  let monthlyTax = 0;
+  let remaining = monthlyTaxableIncome;
 
   for (const bracket of TAX_BRACKETS_2026) {
     const taxableInBracket = Math.min(
       Math.max(0, remaining),
       bracket.max - bracket.min
     );
-    tax += taxableInBracket * bracket.rate;
+    monthlyTax += taxableInBracket * bracket.rate;
     remaining -= taxableInBracket;
     if (remaining <= 0) break;
   }
 
-  return Math.round(tax);
+  return Math.round(monthlyTax * 12);
 }
 
 /**
@@ -367,7 +365,7 @@ export function calculateIncomeSummary(input: IncomeSummaryInput): IncomeSummary
 
   let insuranceDeduction = 0;
   if (hasInsurance && salaryBonusIncome > 0) {
-    const monthlyInsurance = Math.min(salaryBonusIncome / 12, DEDUCTIONS.insuranceCap) * DEDUCTIONS.insuranceRate;
+    const monthlyInsurance = Math.min(salaryBonusIncome / 12, getMaxSocialInsuranceSalary()) * DEDUCTIONS.insuranceRate;
     insuranceDeduction = monthlyInsurance * 12;
   }
 
